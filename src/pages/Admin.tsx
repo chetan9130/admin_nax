@@ -3,6 +3,7 @@ import { ref, onValue, remove, update } from "firebase/database";
 import { db, auth } from "@/lib/firebase";
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
+import { jsPDF } from "jspdf";
 
 const Admin = () => {
   const [messages, setMessages] = useState<any[]>([]);
@@ -12,17 +13,17 @@ const Admin = () => {
   >("dashboard");
 
   const [user, setUser] = useState<User | null>(null);
-
   const navigate = useNavigate();
 
+  // ------------------------------------------------------
+  // LOAD DATA + AUTH
+  // ------------------------------------------------------
   useEffect(() => {
-    // AUTH CHECK
     const unsubAuth = onAuthStateChanged(auth, (currentUser) => {
       if (!currentUser) navigate("/admin-login");
       else setUser(currentUser);
     });
 
-    // CONTACT MESSAGES
     const contactRef = ref(db, "contacts");
     const unsubDb = onValue(contactRef, (snapshot) => {
       const data = snapshot.val();
@@ -35,7 +36,6 @@ const Admin = () => {
       } else setMessages([]);
     });
 
-    // AGREEMENTS FETCH
     const agrRef = ref(db, "agreements");
     const unsubAgr = onValue(agrRef, (snap) => {
       const data = snap.val();
@@ -55,19 +55,22 @@ const Admin = () => {
     };
   }, [navigate]);
 
-  // Logout
+  // ------------------------------------------------------
+  // LOGOUT
+  // ------------------------------------------------------
   const handleLogout = async () => {
     await signOut(auth);
     localStorage.removeItem("admin-auth");
     navigate("/");
   };
 
-  // Delete message
+  // ------------------------------------------------------
+  // MESSAGE ACTIONS
+  // ------------------------------------------------------
   const deleteMessage = async (id: string) => {
     await remove(ref(db, `contacts/${id}`));
   };
 
-  // Mark message as read
   const markAsRead = async (id: string) => {
     await update(ref(db, `contacts/${id}`), {
       read: true,
@@ -75,14 +78,93 @@ const Admin = () => {
     });
   };
 
-  // Delete agreement
+  // ------------------------------------------------------
+  // AGREEMENT ACTIONS
+  // ------------------------------------------------------
   const deleteAgreement = async (id: string) => {
     await remove(ref(db, `agreements/${id}`));
   };
 
+  // ------------------------------------------------------
+  // GENERATE PDF IN ADMIN PANEL
+  // ------------------------------------------------------
+  const downloadAdminPDF = (agr: any) => {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+
+    const margin = 40;
+    const maxWidth = 520;
+    const lineHeight = 14;
+    let y = margin;
+
+    const content = `
+SERVICE AGREEMENT – ADMIN COPY
+--------------------------------------
+
+Client Name: ${agr.fullName}
+Firm Name: ${agr.firmName || "Ambisef Studio Pvt. Ltd."}
+Email: ${agr.email}
+City: ${agr.city}
+Start Date: ${agr.startDate}
+
+--------------------------------------
+PLAN DETAILS
+--------------------------------------
+Plan: ${agr.planName || "Website + Social Media"}
+Amount: ₹${agr.amount || "6000"}/month
+
+--------------------------------------
+CLIENT NOTES
+--------------------------------------
+${agr.notes || "No notes."}
+
+--------------------------------------
+SIGNATURE
+--------------------------------------
+Typed Signature: ${agr.signature}
+Accepted On: ${agr.createdAt}
+`;
+
+    const lines = doc.splitTextToSize(content, maxWidth);
+
+    doc.setFont("helvetica", "");
+    doc.setFontSize(11);
+
+    lines.forEach((line: string) => {
+      if (y > 750) {
+        doc.addPage();
+        y = margin;
+      }
+      doc.text(line, margin, y);
+      y += lineHeight;
+    });
+
+    // Signature Image
+    if (agr.signatureImage) {
+      if (y > 700) {
+        doc.addPage();
+        y = margin;
+      }
+
+      y += 20;
+      doc.text("Client Signature:", margin, y);
+      y += 10;
+
+      doc.addImage(agr.signatureImage, "PNG", margin, y, 140, 60);
+      y += 80;
+    }
+
+    doc.save(`Agreement_${agr.fullName}_${agr.id}.pdf`);
+  };
+
+  // ------------------------------------------------------
+  // FILTERS
+  // ------------------------------------------------------
   const unreadMessages = messages.filter((msg) => !msg.read);
   const readMessages = messages.filter((msg) => msg.read);
 
+  // ------------------------------------------------------
+  // UI
+  // ------------------------------------------------------
   return (
     <div className="min-h-screen bg-black text-white p-6 md:p-10">
 
@@ -205,21 +287,47 @@ const Admin = () => {
             >
               <p><b>Name:</b> {agr.fullName}</p>
               <p><b>Email:</b> {agr.email}</p>
-              <p><b>Phone:</b> {agr.phone}</p>
               <p><b>Start:</b> {agr.startDate}</p>
-              <p><b>Plan:</b> {agr.planName}</p>
-              <p><b>Amount:</b> ₹{agr.amount}</p>
-              <p><b>Status:</b> {agr.reminder28Sent ? "Completed" : "Active"}</p>
+              <p><b>City:</b> {agr.city}</p>
+              <p><b>Plan:</b> {agr.planName || "Website + Social Media"}</p>
+              <p><b>Amount:</b> ₹{agr.amount || "6000"}</p>
+
+              {/* SIGNATURE PREVIEW */}
+              {agr.signatureImage && (
+                <div className="mt-4">
+                  <p className="font-semibold mb-2">Signature:</p>
+                  <a href={agr.signatureImage} target="_blank">
+                    <img
+                      src={agr.signatureImage}
+                      alt="Signature"
+                      className="w-40 h-auto rounded border border-purple-500/30 hover:scale-105 transition duration-200 cursor-pointer"
+                    />
+                  </a>
+                </div>
+              )}
 
               <div className="flex gap-3 mt-4">
-                <a
-                  href={agr.agreementUrl}
-                  target="_blank"
+
+                {/* DOWNLOAD PDF */}
+                <button
+                  onClick={() => downloadAdminPDF(agr)}
                   className="bg-blue-600 px-4 py-2 rounded"
                 >
-                  View Document
-                </a>
+                  Download PDF
+                </button>
 
+                {/* VIEW SIGNATURE */}
+                {agr.signatureImage && (
+                  <a
+                    href={agr.signatureImage}
+                    target="_blank"
+                    className="bg-green-600 px-4 py-2 rounded"
+                  >
+                    View Signature
+                  </a>
+                )}
+
+                {/* DELETE */}
                 <button
                   onClick={() => deleteAgreement(agr.id)}
                   className="bg-red-600 px-4 py-2 rounded"
